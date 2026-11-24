@@ -1,0 +1,117 @@
+clc; clear; close all;
+
+%% Reading almanac
+[almanac, tParameters] = ReadGPSAlmanac();
+
+fprintf('size(almanac)     = %s\n', mat2str(size(almanac)));
+fprintf('size(tParameters) = %s\n', mat2str(size(tParameters)));
+fprintf('ndims(almanac)    = %d\n', ndims(almanac));
+
+%% Almanac of one satellite
+nomer_sputnika = input('Введите номер спутника от 1 до 32: ');
+validateattributes(nomer_sputnika, {'numeric'}, ...
+    {'scalar','integer','>=',1,'<=',32});
+imena    = ["Eccentricity";"Toa";"deltaI";"OmegaDot";"sqrtA"; ...
+            "Omega0";"omega";"M0";"af0";"af1";"satNo"];
+edinitsy = ["-";"s";"rad";"rad/s";"m^0.5"; ...
+            "rad";"rad";"rad";"s";"s/s";"-"];
+
+fprintf('\n Спутник PRN %d \n', nomer_sputnika);
+for k = 1:11
+    fprintf('%-14s %+ .6e   %s\n', imena(k), ...
+        almanac(k, nomer_sputnika), edinitsy(k));
+end
+
+T = table(imena, almanac(:, nomer_sputnika), edinitsy, ...
+    'VariableNames', {'Parameter','Value','Units'});
+disp(T)
+
+%% Almanac of four random satellites
+indeksy = randperm(32, 4);                 % гарантированно различные
+a13 = zeros(11, 1, 4);
+for k = 1:4
+    a13(:, 1, k) = almanac(:, indeksy(k));
+end
+a12_squeeze = squeeze(a13);
+a12_reshape = reshape(a13, 11, 4);
+fprintf('squeeze == reshape : %d\n', isequal(a12_squeeze, a12_reshape));
+
+%% ECC > 0.01
+maska = almanac(1,:) > 0.01;
+nomera_sputnikov = almanac(11, maska);
+fprintf('\nСпутники с e > 0.01: %s\n', mat2str(nomera_sputnikov));
+fprintf('  больше 0.01 : %d\n', sum(maska));
+fprintf('  не больше   : %d\n', sum(~maska));
+
+%% Almanac time
+gpsEpoch = datetime(1980,1,6,0,0,0,'TimeZone','UTC');
+
+% В Yuma-файле номер недели полный (397), не по модулю 1024.
+weekFull = tParameters(1,1);
+toa      = almanac(2,1);
+
+assert(all(tParameters(1,:) == weekFull), 'weekNo различается между спутниками!');
+assert(all(almanac(2,:)     == toa),     'toa различается между спутниками!');
+fprintf('\nweekNo и toa одинаковы у всех 32 спутников — OK\n');
+
+alTime = [weekFull, toa];
+fprintf('alTime = [%d, %.1f]\n', alTime(1), alTime(2));
+
+% Дата альманаха (для справки)
+alDate = gpsEpoch + days(7*weekFull) + seconds(toa);
+alDate.Format = 'yyyy-MM-dd HH:mm:ss';
+fprintf('Дата альманаха: %s\n', alDate);
+
+%% User time
+utcDate = '1988-08-20 18:00:00';
+[weekGps, tow] = UtcToGps(utcDate);
+usTime = [weekGps, tow];
+fprintf('usTime = [%d, %.1f]\n', usTime(1), usTime(2));
+
+dWeek = usTime(1) - alTime(1);
+dTow  = usTime(2) - alTime(2);
+tk    = dWeek*604800 + dTow;
+tk    = mod(tk + 302400, 604800) - 302400;
+
+fprintf('dWeek=%+d, dTow=%+.1f, tk=%.1f с (%.2f ч)\n', ...
+        dWeek, dTow, tk, tk/3600);
+
+if abs(dWeek) > 1
+    warning('Альманах устарел: разность недель = %d. Нужен свежий файл.', dWeek);
+elseif abs(tk) > 4*3600
+    warning('Альманах старше 4 ч: tk = %.0f с. Точность расчёта низкая.', tk);
+end
+
+%% Среднее движение и средняя аномалия
+mu    = 3.986005e14;
+sqrtA = almanac(5,:);
+A     = sqrtA.^2;
+n0    = sqrt(mu ./ A.^3);           % рад/с
+
+% Сверено с .txt: ReadGPSAlmanac отдаёт все углы УЖЕ в радианах.
+M0    = almanac(8,:);               % средняя аномалия на toa, рад
+i_rad = almanac(3,:);               % полное наклонение, рад
+i_deg = i_rad * 180/pi;             % ~53–57°
+
+if any(i_deg < 50 | i_deg > 60)
+    warning('Наклонение вне типичного диапазона GPS: %.2f..%.2f°', ...
+            min(i_deg), max(i_deg));
+end
+
+% Средняя аномалия на момент наблюдения
+Mk = M0 + n0 .* tk;
+Mk = mod(Mk, 2*pi);
+
+fprintf('\nμ  = %.6e м^3/с^2\n', mu);
+fprintf('n0 = %.10e рад/с\n', n0(1));
+fprintf('T  = %.2f с = %.2f ч\n', 2*pi/n0(1), 2*pi/n0(1)/3600);
+fprintf('Mk(PRN %d) = %.6f рад\n', nomer_sputnika, Mk(nomer_sputnika));
+
+fprintf('\nНаклонение PRN %d: %.4f° (сверка с .txt: %.4f°)\n', ...
+        nomer_sputnika, i_deg(nomer_sputnika), ...
+        almanac(3,nomer_sputnika)*180/pi);
+
+fprintf('\nСреднее наклонение (ручное) = %.4f°\n', sum(i_deg)/numel(i_deg));
+fprintf('Среднее наклонение (mean)   = %.4f°\n', mean(i_deg));
+fprintf('Разность                    = %e\n', ...
+        sum(i_deg)/numel(i_deg) - mean(i_deg));

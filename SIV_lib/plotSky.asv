@@ -1,0 +1,45 @@
+function [pax, hSat, hText] = plotSky(pax, az, el, prn, mask)
+if numel(pax)==0
+    pax = polaraxes;                 % ← исправлено: было просто polaraxes
+end
+az  = az(:);
+el  = el(:);
+prn = prn(:);
+
+hold(pax, 'on');
+
+pax.ThetaZeroLocation = 'top';       % север вверху
+pax.ThetaDir          = 'clockwise'; % азимут по часовой
+pax.RDir              = 'reverse';   % зенит (0°) в центре
+pax.RLim              = [0 90];
+pax.ThetaTick         = 0:30:330;
+pax.ThetaTickLabel    = {'С 0°','30°','60°','В 90°','120°','150°', ...
+                         'Ю 180°','210°','240°','З 270°','300°','330°'};
+pax.RTick             = [0 30 60 90];
+pax.RTickLabel        = {'90°','60°','30°','0°'};   % т.к. RDir reverse
+
+% --- окружность маски ---
+th = linspace(0, 2*pi, 361);
+plot(pax, th, mask * ones(size(th)), '--r', 'LineWidth', 1.2);
+
+% --- все спутники: невидимые уводим в NaN, чтобы не рисовались ---
+vis = el > deg2rad(mask);
+r   = rad2deg(el);
+r(~vis) = NaN;
+
+hSat = scatter(pax, az, r, 60, 'filled', ...
+               'MarkerFaceColor', [0 0.45 0.74], ...
+               'MarkerEdgeColor', 'k');
+
+% --- подписи: все, видимость переключаем ---
+hText = text(pax, az, r, " " + string(prn), ...
+             'HorizontalAlignment', 'left', ...
+             'VerticalAlignment',   'bottom', ...
+             'FontSize', 9);
+for k = 1:numel(hText)
+    hText(k).Visible = matlab.lang.OnOffSwitchState(vis(k));
+end
+
+title(pax, 'Диаграмма неба');
+% hold off НЕ ставим — функция может вызываться повторно на тех же осях
+end
